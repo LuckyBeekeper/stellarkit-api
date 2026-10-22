@@ -365,6 +365,47 @@ function isValidPoolId(poolId) {
   return typeof poolId === "string" && /^[0-9a-f]{64}$/.test(poolId);
 }
 
+/**
+ * Validate and parse the `days` lookback query parameter.
+ *
+ * Defaults to 30 when the value is absent (undefined or null). Rejects
+ * non-numeric, non-integer, zero, and negative values with a structured
+ * validation error (isValidation = true, status = 400, field = "days").
+ *
+ * @param {string|number|null|undefined} value - Raw query-parameter value.
+ * @param {number} [defaultDays=30] - Value used when the parameter is absent.
+ * @returns {number} The parsed positive integer number of days.
+ * @throws {Error} A validation error when the value is invalid.
+ */
+function validateDaysLookback(value, defaultDays = 30) {
+  if (value === undefined || value === null || value === "") {
+    return defaultDays;
+  }
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) {
+    const err = makeValidationError(
+      qp("days", "must be a positive integer."),
+      "days",
+      value,
+      "positive integer (e.g. 30)"
+    );
+    err.status = 400;
+    throw err;
+  }
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    const err = makeValidationError(
+      qp("days", "must be a positive integer."),
+      "days",
+      value,
+      "positive integer (e.g. 30)"
+    );
+    err.status = 400;
+    throw err;
+  }
+  return parsed;
+}
+
 module.exports = {
   validateAccountId,
   validateContractId,
@@ -378,4 +419,5 @@ module.exports = {
   validateCredentialType,
   validateTransactionHash,
   isValidPoolId,
+  validateDaysLookback,
 };

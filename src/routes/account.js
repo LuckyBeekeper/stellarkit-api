@@ -6593,6 +6593,210 @@ router.get("/:id/offers-summary", async (req, res, next) => {
   }
 });
 
+const HEATMAP_DAY_NAMES = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+const ACTIVITY_HEATMAP_PAGE_SIZE = 200;
+const ACTIVITY_HEATMAP_MAX_PAGES = 10;
+
+/**
+ * GET /account/:id/activity-heatmap?days=30
+ *
+ * Returns a 7x24 matrix of transaction counts by day of week and hour of day
+ * (UTC), computed from the account's recent transaction history.
+ *
+ * Query params:
+ *   - days (integer, default: 30) — lookback window in days
+ *
+ * Response shape:
+ *   {
+ *     accountId,
+ *     heatmap: { monday: [24 numbers], ..., sunday: [24 numbers] },
+ *     peakDay: string | null,
+ *     peakHour: number | null,
+ *     totalAnalysed: number
+ *   }
+ *
+ * Returns 404 when the account does not exist.
+ *
+ * @example
+ * GET /account/GABC.../activity-heatmap?days=7
+ */
+router.get("/:id/activity-heatmap", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    const DEFAULT_DAYS = 30;
+    let days = DEFAULT_DAYS;
+    if (req.query.days !== undefined) {
+      const parsed = parseInt(req.query.days, 10);
+      if (isNaN(parsed) || parsed < 1 || String(parsed) !== String(req.query.days).trim()) {
+        const err = new Error(
+          "Query parameter 'days': must be a positive integer.",
+        );
+        err.isValidation = true;
+        err.field = "days";
+        err.receivedValue = String(req.query.days);
+        err.expectedFormat = "positive integer";
+        throw err;
+      }
+      days = parsed;
+    }
+
+    await withHorizonTiming(req, () => server.loadAccount(id));
+
+    const since = Date.now() - days * 24 * 60 * 60 * 1000;
+
+    const heatmap = {};
+    for (const dayName of HEATMAP_DAY_NAMES) {
+      heatmap[dayName] = new Array(24).fill(0);
+    }
+
+    let totalAnalysed = 0;
+    let cursor;
+    let reachedEnd = false;
+
+    for (
+      let page = 0;
+      page < ACTIVITY_HEATMAP_MAX_PAGES && !reachedEnd;
+      page++
+    ) {
+      let query = server
+        .transactions()
+        .forAccount(id)
+        .order("desc")
+        .limit(ACTIVITY_HEATMAP_PAGE_SIZE);
+      if (cursor) query = query.cursor(cursor);
+
+      const response = await withHorizonTiming(req, () => query.call());
+      const records = response.records || [];
+
+      for (const tx of records) {
+        cursor = tx.paging_token;
+        const createdAt = new Date(tx.created_at).getTime();
+        if (!Number.isFinite(createdAt) || createdAt < since) {
+          reachedEnd = true;
+          break;
+        }
+        const date = new Date(createdAt);
+        const dayName = HEATMAP_DAY_NAMES[date.getUTCDay()];
+        const hour = date.getUTCHours();
+        heatmap[dayName][hour] += 1;
+        totalAnalysed += 1;
+      }
+
+      if (records.length < ACTIVITY_HEATMAP_PAGE_SIZE) reachedEnd = true;
+    }
+
+    let peakDay = null;
+    let peakHour = null;
+    let peakCount = 0;
+    for (const dayName of HEATMAP_DAY_NAMES) {
+      const hours = heatmap[dayName];
+      for (let hour = 0; hour < 24; hour++) {
+        if (hours[hour] > peakCount) {
+          peakCount = hours[hour];
+          peakDay = dayName;
+          peakHour = hour;
+        }
+      }
+    }
+
+    return success(res, {
+      accountId: id,
+      heatmap,
+      peakDay,
+      peakHour,
+      totalAnalysed,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
+/**
+ * GET /account/:id/asset-diversity
+ *
+ * Measures how diversified an account's asset holdings are using the
+ * Herfindahl-Hirschman Index (HHI) of portfolio weights.
+ *
+ * diversityLevel:
+ *   - "concentrated" when HHI > 2500
+ *   - "moderate"     when 1000 <= HHI <= 2500
+ *   - "diversified"  when HHI < 1000
+ *
+ * Response shape:
+ *   {
+ *     accountId,
+ *     assetCount,
+ *     hhi,
+ *     diversityLevel,
+ *     breakdown: [{ asset, portfolioPercent }]
+ *   }
+ *
+ * Returns 404 when the account does not exist.
+ *
+ * @example
+ * GET /account/GABC.../asset-diversity
+ */
+router.get("/:id/asset-diversity", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
+
+    const holdings = [];
+    for (const balance of account.balances || []) {
+      const value = parseFloat(balance.balance || "0");
+      if (!Number.isFinite(value) || value <= 0) continue;
+      holdings.push({
+        asset: normalizeAssetShape(balance),
+        value,
+      });
+    }
+
+    const totalValue = holdings.reduce((sum, h) => sum + h.value, 0);
+
+    const breakdown = holdings.map((h) => ({
+      asset: h.asset,
+      portfolioPercent:
+        totalValue > 0
+          ? Math.round((h.value / totalValue) * 10000) / 100
+          : 0,
+    }));
+
+    let hhi = 0;
+    for (const entry of breakdown) {
+      hhi += entry.portfolioPercent * entry.portfolioPercent;
+    }
+    hhi = Math.round(hhi * 100) / 100;
+
+    let diversityLevel;
+    if (hhi > 2500) diversityLevel = "concentrated";
+    else if (hhi >= 1000) diversityLevel = "moderate";
+    else diversityLevel = "diversified";
+
+    return success(res, {
+      accountId: id,
+      assetCount: breakdown.length,
+      hhi,
+      diversityLevel,
+      breakdown,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
 /**
  * GET /account/:id/watchlist-status
  *

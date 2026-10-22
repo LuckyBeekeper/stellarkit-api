@@ -19,6 +19,8 @@ The `:id` path parameter is always a 56-character Stellar public key starting wi
 | Inspect multisig configuration | `GET /account/:id/signers` |
 | Run a KYC / compliance check | `GET /account/:id/risk-score` |
 | Display recent trades | `GET /account/:id/trades` |
+| See when an account is most active | `GET /account/:id/activity-heatmap` |
+| Measure portfolio diversification | `GET /account/:id/asset-diversity` |
 
 ---
 
@@ -326,6 +328,107 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
   }
 }
 ```
+
+---
+
+## Use case: Analytics — activity patterns and portfolio diversification
+
+These endpoints summarise an account's behaviour rather than listing raw records. They are intended for analytics tools, wallet dashboards, and financial reporting.
+
+### `GET /account/:id/activity-heatmap`
+
+Returns a 7×24 matrix of transaction counts by day of week and hour of day, computed from the account's recent transaction history. Use this to show when an account is most active — for example, a "when do I transact?" chart in a wallet app.
+
+**Query params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `days` | integer | Lookback period in days. Defaults to `30`. |
+
+**Response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | string | The account the heatmap was computed for |
+| `heatmap` | object | Keys `monday` … `sunday`; each value is an array of exactly 24 hourly transaction counts (index `0` = 00:00–00:59, index `23` = 23:00–23:59) |
+| `peakDay` | string | Day of week with the highest total transaction count |
+| `peakHour` | integer | Hour of day (0–23) with the highest total transaction count across all days |
+| `totalAnalysed` | integer | Total number of transactions included in the analysis |
+
+Returns `404 AccountNotFound` when the account does not exist.
+
+```bash
+# Default 30-day lookback
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/activity-heatmap"
+
+# Last 7 days only
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/activity-heatmap?days=7"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "heatmap": {
+      "monday":    [0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 2, 0, 0, 1, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+      "tuesday":   [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+      "wednesday": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "thursday":  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "friday":    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "saturday":  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "sunday":    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "peakDay": "monday",
+    "peakHour": 14,
+    "totalAnalysed": 14
+  }
+}
+```
+
+---
+
+### `GET /account/:id/asset-diversity`
+
+Measures how diversified an account's asset holdings are. The score is based on the number of distinct assets held, their relative weights, and the Herfindahl-Hirschman Index (HHI) — a standard measure of market concentration. Both the raw HHI and a human-readable `diversityLevel` are returned.
+
+**Response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | string | The account the analysis was computed for |
+| `assetCount` | integer | Number of distinct assets held |
+| `hhi` | number | Herfindahl-Hirschman Index, computed from the squared portfolio percentages (range 0–10000) |
+| `diversityLevel` | string | `"concentrated"` when `hhi > 2500`, `"moderate"` when `hhi` is 1000–2500, `"diversified"` when `hhi < 1000` |
+| `breakdown` | array | Per-asset entries, each with `asset` and `portfolioPercent` |
+
+Returns `404 AccountNotFound` when the account does not exist.
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/asset-diversity"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "assetCount": 3,
+    "hhi": 4235.5,
+    "diversityLevel": "concentrated",
+    "breakdown": [
+      { "asset": { "code": "XLM", "issuer": null, "type": "native" }, "portfolioPercent": 60.0 },
+      { "asset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" }, "portfolioPercent": 30.0 },
+      { "asset": { "code": "AQUA", "issuer": "GBNZ...", "type": "credit_alphanum4" }, "portfolioPercent": 10.0 }
+    ]
+  }
+}
+```
+
+**Interpreting `diversityLevel`:**
+- `"concentrated"` — one asset dominates the portfolio; a single price move drives most of the account's value.
+- `"moderate"` — holdings are spread across a few assets but still meaningfully weighted.
+- `"diversified"` — value is spread broadly across many assets.
 
 ---
 
@@ -651,6 +754,14 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
 1. GET /account/:id/effects         → complete ledger effect stream
 2. GET /account/:id/transactions    → full transaction history
 3. GET /account/:id/payments        → payment-only filtered view
+```
+
+### Build an analytics dashboard
+
+```
+1. GET /account/:id/activity-heatmap  → when the account transacts (7×24 matrix)
+2. GET /account/:id/asset-diversity   → how concentrated the portfolio is (HHI)
+3. GET /account/:id/historical-balances → balance trend over time
 ```
 
 ---
