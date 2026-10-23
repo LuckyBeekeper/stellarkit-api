@@ -195,6 +195,12 @@ const cacheTTL = {
     process.env.CACHE_TTL_SOROBAN_STATS_MS,
     60000
   ),
+
+  /** /account/:id/balance-velocity — payment history analysis, 30 s default */
+  balanceVelocity: msToSeconds(
+    process.env.CACHE_TTL_BALANCE_VELOCITY_MS,
+    30000
+  ),
 };
 
 module.exports = cacheTTL;

@@ -6800,7 +6800,6 @@ const OFFERS_SUMMARY_PAGE_SIZE = 200;
 // An account holds at most 1,000 subentries, so five full pages always cover
 // every open offer.
 const OFFERS_SUMMARY_MAX_PAGES = 5;
-const STROOPS_PER_UNIT = 10_000_000n;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
@@ -8030,6 +8029,18 @@ router.get("/:id/balance-velocity", async (req, res, next) => {
       });
     }
 
+    const cacheKey = `balance-velocity:${id}`;
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
+
+    // Check cache first (unless fresh=true)
+    if (!fresh) {
+      const cached = cacheService.get(cacheKey);
+      if (cached) {
+        res.set("X-Cache", "HIT");
+        return success(res, cached);
+      }
+    }
+
     // Check if account exists and get current balances
     let account;
     try {
@@ -8148,6 +8159,10 @@ router.get("/:id/balance-velocity", async (req, res, next) => {
       accountId: id,
       balanceChanges: result,
     };
+
+    // Cache the result
+    cacheService.set(cacheKey, data, cacheTTL.balanceVelocity);
+    res.set("X-Cache", "MISS");
 
     return success(res, data);
   } catch (err) {
