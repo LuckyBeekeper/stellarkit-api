@@ -7792,6 +7792,210 @@ router.get("/:id/fee-spending", async (req, res, next) => {
   }
 });
 
+/**
+ * GET /account/:id/self-payment-detection
+ *
+ * Analyses recent payment history and flags:
+ *   - "direct_self"   : sender and recipient share at least one signing key
+ *   - "circular_chain": a payment chain that returns value to the originating
+ *                       account within 10 hops
+ *
+ * Response:
+ *   { success: true, data: { accountId, selfPaymentsDetected, patterns: [{ type, txHash, amount, asset, timestamp }] } }
+ */
+router.get("/:id/self-payment-detection", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    // Verify account exists and get its signers
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
+    const accountSigners = new Set((account.signers || []).map((s) => s.key));
+
+    // Fetch recent payments (up to 200)
+    const paymentsResponse = await withHorizonTiming(req, () =>
+      server.payments().forAccount(id).limit(200).order("desc").call()
+    );
+    const payments = paymentsResponse.records || [];
+
+    const patterns = [];
+
+    // Build a map of visited accounts for circular chain detection
+    for (const op of payments) {
+      if (op.transaction_successful === false) continue;
+      if (op.type !== "payment" && op.type !== "path_payment_strict_send" && op.type !== "path_payment_strict_receive") continue;
+
+      const from = op.from || op.funder;
+      const to = op.to || op.account;
+      if (!from || !to) continue;
+
+      const assetType = op.asset_type || "native";
+      const asset = isNativeAsset({ type: assetType })
+        ? { code: "XLM", issuer: null, type: "native" }
+        : { code: op.asset_code || null, issuer: op.asset_issuer || null, type: assetType };
+      const amount = op.amount || op.starting_balance || "0";
+
+      // Direct self-payment: sender and recipient share signing keys
+      if (from !== to) {
+        try {
+          const counterparty = from === id ? to : from;
+          const counterpartyAccount = await server.loadAccount(counterparty);
+          const counterpartySigners = new Set((counterpartyAccount.signers || []).map((s) => s.key));
+          const sharedKeys = [...accountSigners].filter((k) => counterpartySigners.has(k));
+          if (sharedKeys.length > 0) {
+            patterns.push({
+              type: "direct_self",
+              txHash: op.transaction_hash,
+              amount,
+              asset,
+              timestamp: op.created_at,
+            });
+            continue;
+          }
+        } catch (_) {
+          // counterparty not found or unreachable — skip
+        }
+      }
+
+      // Direct self-payment: sender === recipient
+      if (from === id && to === id) {
+        patterns.push({
+          type: "direct_self",
+          txHash: op.transaction_hash,
+          amount,
+          asset,
+          timestamp: op.created_at,
+        });
+        continue;
+      }
+
+      // Circular chain detection: trace payment path up to 10 hops
+      if (from === id) {
+        // Walk the chain: id → to → ... → id?
+        const visited = new Set([id]);
+        let current = to;
+        let hops = 0;
+        let isCircular = false;
+        while (hops < 10 && current && !visited.has(current)) {
+          visited.add(current);
+          hops++;
+          // Find an outbound payment from `current` to another account in our payments list
+          const next = payments.find(
+            (p) =>
+              p.transaction_successful !== false &&
+              (p.from === current || p.funder === current) &&
+              p.transaction_hash !== op.transaction_hash
+          );
+          if (!next) break;
+          const nextTo = next.to || next.account;
+          if (nextTo === id) {
+            isCircular = true;
+            break;
+          }
+          current = nextTo;
+        }
+        if (isCircular) {
+          patterns.push({
+            type: "circular_chain",
+            txHash: op.transaction_hash,
+            amount,
+            asset,
+            timestamp: op.created_at,
+          });
+        }
+      }
+    }
+
+    return success(res, {
+      accountId: id,
+      selfPaymentsDetected: patterns.length > 0,
+      patterns,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
+/**
+ * GET /account/:id/operation-type-breakdown
+ *
+ * Returns a breakdown of all operations by type with count and percentage of total.
+ * Sorted by count descending.
+ *
+ * Query params:
+ *   - days (integer, 1–90, default: 30) — how many days of history to analyse
+ *
+ * Response:
+ *   { success: true, data: { accountId, totalOperations, breakdown: [{ type, count, percent }] } }
+ */
+router.get("/:id/operation-type-breakdown", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    // Validate ?days= param
+    const rawDays = req.query.days;
+    let days = 30;
+    if (rawDays !== undefined) {
+      const parsed = Number(rawDays);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 90) {
+        const err = new Error("Query parameter 'days': must be an integer between 1 and 90.");
+        err.isValidation = true;
+        err.status = 400;
+        err.field = "days";
+        err.receivedValue = String(rawDays);
+        err.expectedFormat = "1–90";
+        throw err;
+      }
+      days = parsed;
+    }
+
+    // Verify account exists
+    await withHorizonTiming(req, () => server.loadAccount(id));
+
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const typeCounts = new Map();
+    let cursor;
+    const MAX_PAGES = 10;
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let query = server.operations().forAccount(id).limit(200).order("desc");
+      if (cursor) query = query.cursor(cursor);
+      const response = await withHorizonTiming(req, () => query.call());
+      const records = response.records || [];
+      let reachedEnd = false;
+      for (const op of records) {
+        cursor = op.paging_token;
+        if (new Date(op.created_at) < since) {
+          reachedEnd = true;
+          break;
+        }
+        const type = op.type || "unknown";
+        typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+      }
+      if (reachedEnd || records.length < 200) break;
+    }
+
+    const totalOperations = [...typeCounts.values()].reduce((s, c) => s + c, 0);
+
+    const breakdown = [...typeCounts.entries()]
+      .map(([type, count]) => ({
+        type,
+        count,
+        percent: totalOperations > 0 ? parseFloat(((count / totalOperations) * 100).toFixed(2)) : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return success(res, {
+      accountId: id,
+      totalOperations,
+      breakdown,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
 module.exports = router;
 
 // SHELL_SYNC_MARKER
