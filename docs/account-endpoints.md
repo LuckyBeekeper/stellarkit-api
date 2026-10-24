@@ -18,6 +18,7 @@ The `:id` path parameter is always a 56-character Stellar public key starting wi
 | Show offer history (created/updated/deleted) | `GET /account/:id/offer-history` |
 | Inspect multisig configuration | `GET /account/:id/signers` |
 | Run a KYC / compliance check | `GET /account/:id/risk-score` |
+| Detect unusual transaction rates | `GET /account/:id/transaction-velocity` |
 | Display recent trades | `GET /account/:id/trades` |
 | See when an account is most active | `GET /account/:id/activity-heatmap` |
 | Measure portfolio diversification | `GET /account/:id/asset-diversity` |
@@ -380,4 +381,527 @@ curl "http://localhost:3000/account/GAAZI4TCR3.../trades"
 
 ## Use case: Analytics — activity patterns and portfolio diversification
 
-These endpoints summarise an account's behaviour rather than listing raw records. They are intended for analytics tools, wallet dashboards, and financial 
+These endpoints summarise an account's behaviour rather than listing raw records. They are intended for analytics tools, wallet dashboards, and financial reporting.
+
+### `GET /account/:id/activity-heatmap`
+
+Returns a 7×24 matrix of transaction counts by day of week and hour of day, computed from the account's recent transaction history. Use this to show when an account is most active — for example, a "when do I transact?" chart in a wallet app.
+
+**Query params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `days` | integer | Lookback period in days. Defaults to `30`. |
+
+**Response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | string | The account the heatmap was computed for |
+| `heatmap` | object | Keys `monday` … `sunday`; each value is an array of exactly 24 hourly transaction counts (index `0` = 00:00–00:59, index `23` = 23:00–23:59) |
+| `peakDay` | string | Day of week with the highest total transaction count |
+| `peakHour` | integer | Hour of day (0–23) with the highest total transaction count across all days |
+| `totalAnalysed` | integer | Total number of transactions included in the analysis |
+
+Returns `404 AccountNotFound` when the account does not exist.
+
+```bash
+# Default 30-day lookback
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/activity-heatmap"
+
+# Last 7 days only
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/activity-heatmap?days=7"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "heatmap": {
+      "monday":    [0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 2, 0, 0, 1, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+      "tuesday":   [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+      "wednesday": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "thursday":  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "friday":    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "saturday":  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "sunday":    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "peakDay": "monday",
+    "peakHour": 14,
+    "totalAnalysed": 14
+  }
+}
+```
+
+---
+
+### `GET /account/:id/asset-diversity`
+
+Measures how diversified an account's asset holdings are. The score is based on the number of distinct assets held, their relative weights, and the Herfindahl-Hirschman Index (HHI) — a standard measure of market concentration. Both the raw HHI and a human-readable `diversityLevel` are returned.
+
+**Response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | string | The account the analysis was computed for |
+| `assetCount` | integer | Number of distinct assets held |
+| `hhi` | number | Herfindahl-Hirschman Index, computed from the squared portfolio percentages (range 0–10000) |
+| `diversityLevel` | string | `"concentrated"` when `hhi > 2500`, `"moderate"` when `hhi` is 1000–2500, `"diversified"` when `hhi < 1000` |
+| `breakdown` | array | Per-asset entries, each with `asset` and `portfolioPercent` |
+
+Returns `404 AccountNotFound` when the account does not exist.
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/asset-diversity"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "assetCount": 3,
+    "hhi": 4235.5,
+    "diversityLevel": "concentrated",
+    "breakdown": [
+      { "asset": { "code": "XLM", "issuer": null, "type": "native" }, "portfolioPercent": 60.0 },
+      { "asset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" }, "portfolioPercent": 30.0 },
+      { "asset": { "code": "AQUA", "issuer": "GBNZ...", "type": "credit_alphanum4" }, "portfolioPercent": 10.0 }
+    ]
+  }
+}
+```
+
+**Interpreting `diversityLevel`:**
+- `"concentrated"` — one asset dominates the portfolio; a single price move drives most of the account's value.
+- `"moderate"` — holdings are spread across a few assets but still meaningfully weighted.
+- `"diversified"` — value is spread broadly across many assets.
+
+---
+
+## Use case: DEX — offers and offer history
+
+These endpoints cover an account's activity on the Stellar decentralised exchange.
+
+### `GET /account/:id/offers`
+
+Returns currently open DEX offers. Each offer shows the selling asset, amount, buying asset, and price.
+
+**Query params:** `limit`, `cursor`, `offerId` (fetch a single offer by ID).
+
+```bash
+# All open offers
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/offers"
+
+# Single offer by ID
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/offers?offerId=123456"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "offerId": "123456",
+        "seller": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        "selling": {
+          "asset": { "code": "XLM", "issuer": null, "type": "native" },
+          "amount": "500.0000000"
+        },
+        "buying": {
+          "asset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" }
+        },
+        "price": "0.0850000",
+        "lastModifiedLedger": 52834901
+      }
+    ],
+    "total": 1,
+    "limit": 20,
+    "cursor": "123456"
+  }
+}
+```
+
+---
+
+### `GET /account/:id/offer-history`
+
+Returns historical offer operations — every time the account created, updated, or deleted a DEX offer. Use this alongside `/offers` to understand an account's full trading activity: `/offers` for the current state, `/offer-history` for the timeline.
+
+**Query params:** `limit`, `order`, `cursor`.
+
+**Response fields per entry:**
+
+| Field | Type | Description |
+|---|---|---|
+| `offerId` | string | Horizon offer ID |
+| `type` | string | `"created"`, `"updated"`, or `"deleted"` |
+| `sellingAsset` | object | `{ code, issuer, type }` |
+| `buyingAsset` | object | `{ code, issuer, type }` |
+| `amount` | string | Amount of the selling asset |
+| `price` | string | Exchange rate (seven decimals) |
+| `timestamp` | string | ISO 8601 timestamp of the operation |
+| `transactionHash` | string | Hash of the containing transaction |
+
+```bash
+# Most recent offer activity
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/offer-history"
+
+# Oldest first, 50 per page
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/offer-history?order=asc&limit=50"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "offerId": "123456",
+        "type": "created",
+        "sellingAsset": { "code": "XLM", "issuer": null, "type": "native" },
+        "buyingAsset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" },
+        "amount": "500.0000000",
+        "price": "0.0850000",
+        "timestamp": "2026-09-01T10:00:00Z",
+        "transactionHash": "abc123..."
+      },
+      {
+        "offerId": "123456",
+        "type": "deleted",
+        "sellingAsset": { "code": "XLM", "issuer": null, "type": "native" },
+        "buyingAsset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" },
+        "amount": "0.0000000",
+        "price": "0.0850000",
+        "timestamp": "2026-09-02T08:15:00Z",
+        "transactionHash": "def456..."
+      }
+    ],
+    "total": 2,
+    "limit": 20,
+    "cursor": "216532748304662529"
+  }
+}
+```
+
+**Combining `/offers` and `/offer-history`:**
+Call `/offers` to display the current open book. Call `/offer-history` to show the account's DEX activity over time — useful for trading dashboards that want to display fill/cancel history alongside live positions.
+
+---
+
+## Use case: Multisig — inspecting signing configuration
+
+These endpoints are the building blocks for multisig-aware wallets and signing UIs.
+
+### `GET /account/:id/signers`
+
+Returns all signers for an account with their weights and types, plus the three threshold levels. This is the first endpoint to call when building a signing workflow.
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/signers"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "signers": [
+      { "key": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN", "weight": 1, "type": "ed25519_public_key", "sponsor": null },
+      { "key": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", "weight": 2, "type": "ed25519_public_key", "sponsor": null }
+    ],
+    "thresholds": {
+      "lowThreshold": 1,
+      "medThreshold": 2,
+      "highThreshold": 3
+    },
+    "lastModifiedLedger": 52834901
+  }
+}
+```
+
+---
+
+### `POST /account/:id/multisig-plan`
+
+Given a list of available signers, returns the minimal combinations of those signers that can authorise each threshold level. Use this to build signing UIs that tell users exactly which keys are needed before they sign.
+
+**Request body:** `{ "availableSigners": ["G...", "G..."] }`
+
+```bash
+curl -X POST "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/multisig-plan" \
+  -H "Content-Type: application/json" \
+  -d '{"availableSigners": ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"]}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "lowThreshold": 1,
+    "medThreshold": 2,
+    "highThreshold": 3,
+    "signerWeights": [
+      { "key": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", "weight": 2 }
+    ],
+    "validCombinations": {
+      "low":  [ [{ "key": "GBBD47IF...", "weight": 2 }] ],
+      "med":  [ [{ "key": "GBBD47IF...", "weight": 2 }] ],
+      "high": []
+    }
+  }
+}
+```
+
+**Typical multisig workflow:**
+1. Call `/account/:id/signers` to fetch the current signer list and thresholds.
+2. Present the signing keys to the user so they can select which keys are available.
+3. POST to `/account/:id/multisig-plan` with the selected keys.
+4. Use `validCombinations.high` (or `med`/`low` depending on the operation) to determine which subset of keys must sign.
+
+---
+
+## Use case: Compliance — risk and freeze status
+
+These endpoints are designed for KYC/AML workflows, issuer tools, and compliance dashboards.
+
+### `GET /account/:id/risk-score`
+
+Returns a computed risk score (0–100) and a list of contributing factors. The score is derived from account age, home domain presence, multisig usage, trustline count, and recent transaction volume.
+
+**Rating labels:** `"low"` (≥ 70), `"medium"` (40–69), `"high"` (< 40).
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/risk-score"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "score": 80,
+    "rating": "low",
+    "factors": [
+      { "name": "Account Age", "value": "730 days", "impact": "positive", "detail": "Account is over 1 year old, established reputation" },
+      { "name": "Home Domain", "value": "example.com", "impact": "positive", "detail": "Account has a home domain set" },
+      { "name": "Multi-signature", "value": "Single signer", "impact": "neutral", "detail": "Account uses single signature" },
+      { "name": "Trustline Count", "value": "2 trustlines", "impact": "positive", "detail": "Low number of trustlines" },
+      { "name": "Recent Activity", "value": "3 transactions in last limit", "impact": "positive", "detail": "Low recent transaction activity" }
+    ]
+  }
+}
+```
+
+---
+
+### `GET /account/:id/freeze-status/:assetCode/:assetIssuer`
+
+Checks whether a specific asset trustline is frozen, partially frozen, or fully authorized on an account. Returns `isFrozen`, `isPartiallyFrozen`, `canSend`, and `canReceive`.
+
+```bash
+# Check USDC freeze status
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/freeze-status/USDC/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "asset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" },
+    "isFrozen": false,
+    "isPartiallyFrozen": false,
+    "canSend": true,
+    "canReceive": true,
+    "detail": "The trustline is authorized and the account can send and receive this asset normally."
+  }
+}
+```
+
+**Compliance workflow — checking multiple accounts:**
+Use `POST /account/freeze-status` (batch endpoint) to check up to 20 accounts against one asset in a single request, rather than looping over individual calls.
+
+```bash
+curl -X POST "http://localhost:3000/account/freeze-status" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "addresses": [
+      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+      "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+    ],
+    "asset": { "code": "USDC", "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" }
+  }'
+```
+
+---
+
+### `GET /account/:id/transaction-velocity`
+
+Returns how quickly the account is transacting. Compliance and fraud detection tools use this to spot automated activity or unusual behaviour: a sudden burst of transactions relative to the account's historical average is a common signal of a compromised key or a bot.
+
+The endpoint counts transactions per hour for the last 24 hours and compares the peak rate against the account's historical average.
+
+**Response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | string | The account the velocity was computed for |
+| `hourlyBreakdown` | array | Exactly 24 entries, one per hour, oldest first. Each entry has `hour` (ISO 8601 start of the hour) and `count` (transactions in that hour) |
+| `peakHour` | string \| null | ISO 8601 start of the hour with the highest `count`; `null` when there is no activity |
+| `peakCount` | number | Transaction count in the peak hour (0 when inactive) |
+| `averagePerHour` | number | Mean transactions per hour across the 24-hour window |
+| `velocityScore` | number | 0–100 indicating how unusual the rate is relative to the account's historical average. `0` for inactive accounts; higher values mean the current rate is further above normal |
+
+Returns `404 AccountNotFound` when the account does not exist on the configured network.
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/transaction-velocity"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "hourlyBreakdown": [
+      { "hour": "2026-10-17T11:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T12:00:00.000Z", "count": 1 },
+      { "hour": "2026-10-17T13:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T14:00:00.000Z", "count": 2 },
+      { "hour": "2026-10-17T15:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T16:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T17:00:00.000Z", "count": 1 },
+      { "hour": "2026-10-17T18:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T19:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T20:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T21:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T22:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-17T23:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T00:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T01:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T02:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T03:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T04:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T05:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T06:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T07:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T08:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T09:00:00.000Z", "count": 0 },
+      { "hour": "2026-10-18T10:00:00.000Z", "count": 14 }
+    ],
+    "peakHour": "2026-10-18T10:00:00.000Z",
+    "peakCount": 14,
+    "averagePerHour": 0.75,
+    "velocityScore": 87
+  }
+}
+```
+
+An account with no transactions in the window returns 24 zero-count entries, `peakHour: null`, `peakCount: 0`, `averagePerHour: 0` and `velocityScore: 0`.
+
+---
+
+### `GET /account/:id/inactivity`
+
+Returns how many days have passed since the account's last transaction and a status label: `"active"` (< 30 days), `"idle"` (30–180 days), or `"dormant"` (> 180 days).
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/inactivity"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "lastTransactionAt": "2026-08-15T09:22:00Z",
+    "lastTransactionHash": "abc123...",
+    "daysSinceLastTransaction": 42,
+    "status": "idle"
+  }
+}
+```
+
+---
+
+## Combining endpoints by use case
+
+### Build a wallet portfolio screen
+
+```
+1. GET /account/:id/summary         → balances + recent activity in one call
+2. GET /account/:id/trustlines      → full trustline list with metadata
+3. GET /account/:id/pool-positions  → LP positions (if any)
+```
+
+### Build a compliance dashboard
+
+```
+1. GET /account/:id/risk-score      → overall risk rating and factors
+2. GET /account/:id/transaction-velocity  → unusual transaction-rate detection
+3. GET /account/:id/inactivity      → activity status
+4. GET /account/:id/freeze-status/:code/:issuer  → per-asset authorization
+5. POST /account/freeze-status      → bulk check across many accounts
+```
+
+### Build a multisig signing UI
+
+```
+1. GET /account/:id/signers         → current signers and thresholds
+2. POST /account/:id/multisig-plan  → which keys are needed to sign
+```
+
+### Build a DEX trading dashboard
+
+```
+1. GET /account/:id/summary         → open offers overview
+2. GET /account/:id/offers          → current live offers
+3. GET /account/:id/offer-history   → full offer timeline
+4. GET /account/:id/trades          → executed trade history
+```
+
+### Audit an account's full activity
+
+```
+1. GET /account/:id/effects         → complete ledger effect stream
+2. GET /account/:id/transactions    → full transaction history
+3. GET /account/:id/payments        → payment-only filtered view
+```
+
+### Build an analytics dashboard
+
+```
+1. GET /account/:id/activity-heatmap  → when the account transacts (7×24 matrix)
+2. GET /account/:id/asset-diversity   → how concentrated the portfolio is (HHI)
+3. GET /account/:id/historical-balances → balance trend over time
+```
+
+---
+
+## Error responses
+
+All account endpoints return errors in the standard StellarKit envelope:
+
+```json
+{
+  "success": false,
+  "error": {
+    "type": "AccountNotFound",
+    "message": "Account GAAZI4... was not found on the Stellar testnet network.",
+    "suggestion": "Verify the account address is correct and that the account has been funded."
+  }
+}
+```
+
+| Scenario | HTTP status | `error.type` |
+|---|---|---|
+| Malformed account ID | 400 | `InvalidAccountId` |
+| Account does not exist | 404 | `AccountNotFound` |
+| Asset trustline missing | 404 | `TrustlineNotFound` |
+| Validation failure (bad limit, etc.) | 400 | `ValidationError` |
+| Horizon did not respond | 504 | `HorizonTimeout` |
+
+See [docs/error-reference.md](./error-reference.md) for the full error type catalogue.
