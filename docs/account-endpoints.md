@@ -8,7 +8,7 @@ The `:id` path parameter is always a 56-character Stellar public key starting wi
 
 ## Quick reference: which endpoint to call first
 
-| I want to… | Start here |
+| I want to … | Start here |
 |---|---|
 | Build a wallet dashboard | `GET /account/:id/summary` |
 | Show all balances | `GET /account/:id/balances` |
@@ -22,6 +22,7 @@ The `:id` path parameter is always a 56-character Stellar public key starting wi
 | Display recent trades | `GET /account/:id/trades` |
 | See when an account is most active | `GET /account/:id/activity-heatmap` |
 | Measure portfolio diversification | `GET /account/:id/asset-diversity` |
+| Flag concentrated token holdings | `GET /account/:id/token-concentration` |
 
 ---
 
@@ -52,7 +53,7 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
   "success": true,
   "data": {
     "accountInfo": {
-      "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+      "accountId": "GAAZI4TCR3...",
       "sequence": "165420053979136",
       "subentryCount": 3,
       "homeDomain": "example.com",
@@ -94,13 +95,13 @@ Returns XLM and all non-native asset balances. Supports filtering to specific as
 
 ```bash
 # All balances
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/balances"
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CVWJH59IAJTGKIN2ER7LBNVKOCCWO/balances"
 
 # XLM only
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/balances?native=true"
+curl "http://localhost:3000/account/GAAZI4TCR3.../balances?native=true"
 
 # Filter to specific assets
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/balances?assets=USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CVWJH59IAJTGKIN2ER7LBNVKOCCWO/balances?assets=USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPPPRE34K4KZVN"
 ```
 
 ---
@@ -110,7 +111,7 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
 Returns only the native XLM balance with buying and selling liabilities. Lighter than `/balances` when you only need XLM.
 
 ```bash
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/native-balance"
+curl "http://localhost:3000/account/GAAZI4TCR3.../native-balance"
 ```
 
 ```json
@@ -140,10 +141,10 @@ Returns all trustlines with optional TOML metadata from each issuer's home domai
 
 ```bash
 # All trustlines
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trustlines"
+curl "http://localhost:3000/account/GAAZI4TCR3.../trustlines"
 
 # Only USDC trustlines
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trustlines?assetCode=USDC"
+curl "http://localhost:3000/account/GAAZI4TCR3.../trustlines?assetCode=USDC"
 ```
 
 ---
@@ -160,14 +161,14 @@ Reconstructs balance snapshots at regular intervals by starting from the current
 | `resolution` | string | Interval between snapshots: `7d` (default) or `30d`. Any other value returns `400`. |
 
 ```bash
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/historical-balances?resolution=30d"
+curl "http://localhost:3000/account/GAAZI4TCR3.../historical-balances?resolution=30d"
 ```
 
 ```json
 {
   "success": true,
   "data": {
-    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "accountId": "GAAZI4TCR3...",
     "asset": { "code": "XLM", "issuer": null, "type": "native" },
     "resolution": "30d",
     "snapshots": [
@@ -185,8 +186,54 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
 Aggregates the account's liquidity pool positions: per-pool share percentage and equivalent reserves, plus totals per asset across all pools. Cached per account (`CACHE_TTL_LIQUIDITY_CONTRIBUTION_MS`, default 15 s); responses carry `X-Cache: HIT|MISS`. Pass `?fresh=true` to bypass the cache.
 
 ```bash
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/liquidity-contribution"
+curl "http://localhost:3000/account/GAAZI4TCR3.../liquidity-contribution"
 ```
+
+---
+
+### `GET /account/:id/token-concentration`
+
+Measures how concentrated an account's token (non-native) portfolio is. Uses the same HHI (Herfindahl-Hirschman Index) methodology as `/asset-diversity`, but ignores the native XLM balance so that portfolio risk tools can flag accounts holding most of their token value in a single illiquid asset.
+
+Each token balance is treated as an equal-weighted share of total token balance; the HHI is the sum of the squared percentage shares (ranging from 0 to 10000). The concentration risk label is derived from the HHI:
+
+| HHI interval | `concentrationRisk` |
+|---|---|
+| > 8000 | `critical` |
+| 5001 – 8000 | `high` |
+| 2501 – 5000 | `moderate` |
+| ≤ 2500 | `low` |
+
+**Response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | string | The 56-character account public key |
+| `concentrationRisk` | string | One of `critical`, `high`, `moderate`, ``low` |
+| `topHoldingPercent` | number | Share of total token value held in the largest position (0 – 100) |
+| `topHoldingAsset` | object | null | Asset identifier of the largest position, or `null` when the account holds no tokens |
+| `tokenCount` | number | Number of non-native token positions with a non-zero balance |
+| `hhi` | number | Herfindahl-Hirschman Index over token positions (0 – 10000) |
+
+```bash
+curl "http://localhost:3000/account/GAAZI4TCR3.../token-concentration"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accountId": "GAAZI4TCR3...",
+    "concentrationRisk": "critical",
+    "topHoldingPercent": 92.5,
+    "topHoldingAsset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" },
+    "tokenCount": 2,
+    "hhi": 8562.5
+  }
+}
+```
+
+An account with no token positions returns `concentrationRisk`: ``low`, `topHoldingPercent`: 0, `topHoldingAsset`: `null`, `tokenCount`: 0, and `hhi`: 0. Returns `404 AccountNotFound` when the account does not exist.
 
 ---
 
@@ -202,13 +249,13 @@ Paginated transaction history. Each record includes the fee summary, memo, and o
 
 ```bash
 # Latest 20 transactions
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/transactions"
+curl "http://localhost:3000/account/GAAZI4TCR3.../transactions"
 
 # Oldest first, paginate
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/transactions?order=asc&limit=50"
+curl "http://localhost:3000/account/GAAZI4TCR3.../transactions?order=asc&limit=50"
 
 # Only transactions containing a payment operation
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/transactions?type=payment"
+curl "http://localhost:3000/account/GAAZI4TCR3.../transactions?type=payment"
 ```
 
 ---
@@ -221,10 +268,10 @@ Returns payment and create_account operations only — a narrower view than full
 
 ```bash
 # Latest payments
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/payments"
+curl "http://localhost:3000/account/GAAZI4TCR3.../payments"
 
 # Only USDC payments in the last month
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/payments?assetCode=USDC&startDate=2026-08-01T00:00:00Z"
+curl "http://localhost:3000/account/GAAZI4TCR3.../payments?assetCode=USDC&startDate=2026-08-01T00:00:00Z"
 ```
 
 ```json
@@ -235,8 +282,8 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
       {
         "paymentId": "216532748304662529",
         "type": "payment",
-        "from": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-        "to": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        "from": "GBBD47IF6LWK7P7MDEVSWR7DPUWV3NY3DTQEVFL4NAT4AQH3HLFLA5",
+        "to": "GAAZI4TCR3...",
         "asset": { "code": "USDC", "issuer": "GA5Z...", "type": "credit_alphanum4" },
         "amount": "50.0000000",
         "createdAt": "2026-09-20T14:32:11Z",
@@ -260,10 +307,10 @@ Paginated ledger effects for the account. Effects are the low-level side effects
 
 ```bash
 # Latest effects
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/effects"
+curl "http://localhost:3000/account/GAAZI4TCR3.../effects"
 
 # Only account_credited effects
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/effects?type=account_credited"
+curl "http://localhost:3000/account/GAAZI4TCR3.../effects?type=account_credited"
 ```
 
 ---
@@ -273,14 +320,14 @@ curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER
 Lists operations the account has submitted that have not yet produced confirmed effects. Each entry has `operationType`, `estimatedLedger` and `submittedAt`; `pendingEffects` is empty when nothing is pending. Returns `404` for unknown accounts. Never cached — the response is sent with `Cache-Control: no-store`.
 
 ```bash
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/pending-effects"
+curl "http://localhost:3000/account/GAAZI4TCR3.../pending-effects"
 ```
 
 ```json
 {
   "success": true,
   "data": {
-    "accountId": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "accountId": "GAAZI4TCR3...",
     "pendingEffects": [
       {
         "operationId": "225180887986176001",
@@ -304,7 +351,7 @@ Returns DEX trades for the account, showing both sides (sold/bought) and the pri
 **Query params:** `limit`, `order`, `cursor`, `startDate`, `endDate`, `fresh`.
 
 ```bash
-curl "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trades"
+curl "http://localhost:3000/account/GAAZI4TCR3.../trades"
 ```
 
 ```json
